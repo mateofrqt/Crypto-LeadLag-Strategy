@@ -136,9 +136,10 @@ This project builds on recent academic work in lead-lag detection:
 - [x] Hermitian spectral clustering
 - [x] Backtesting framework (CP, GCP, GP)
 - [x] Live trading bot (Hyperliquid)
+- [x] WebSocket real-time data mode
 - [ ] Multi-timeframe signal confirmation
 - [ ] Higher frequency execution (1h, 15m)
-- [ ] WebSocket real-time data mode
+
 
 ## Disclaimer
 
