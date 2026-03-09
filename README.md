@@ -1,5 +1,8 @@
 # Crypto Lead-Lag Strategy
 
+> [!WARNING]
+> **This repository is for demonstration purposes only and lags behind the original project by more than a month.**
+
 A cryptocurrency trading bot that detects **lead-lag relationships** between assets using Lévy-area signatures and Hermitian matrix clustering, then generates systematic trading signals on the [Hyperliquid](https://hyperliquid.xyz) perpetual futures exchange.
 
 ## How It Works
