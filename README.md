@@ -1,153 +1,128 @@
-# Crypto Lead-Lag Strategy
+# Systematic Trading — Research & Live Strategies
 
-> [!WARNING]
-> **This repository is for demonstration purposes only and lags behind the original project by more than a month.**
+![Python](https://img.shields.io/badge/python-3.11-blue) ![Status](https://img.shields.io/badge/status-live%20%2F%20research-green) ![Asset-class](https://img.shields.io/badge/asset--class-crypto%20perps-orange) ![Venue](https://img.shields.io/badge/venue-Hyperliquid-black)
 
-A cryptocurrency trading bot that detects **lead-lag relationships** between assets using Lévy-area signatures and Hermitian matrix clustering, then generates systematic trading signals on the [Hyperliquid](https://hyperliquid.xyz) perpetual futures exchange.
+This repository showcases three systematic trading strategies I have designed, backtested and, for two of them, deployed in a live or semi-live environment on crypto perpetuals. Signal construction, thresholds and parameter sets are intentionally omitted; this document focuses on architecture, methodology and out-of-sample results.
 
-## How It Works
+---
 
-Some crypto assets consistently move before others — a phenomenon known as the lead-lag effect. This project captures that signal mathematically and turns it into a portfolio strategy.
+## Strategies Overview
 
-**Pipeline overview:**
+| # | Strategy | Asset class | Universe | Timeframe | Style | Status |
+|---|---|---|---|---|---|---|
+| 1 | **Cross-Sectional Lead-Lag (Daily)** | Crypto perpetuals | ~40+ Hyperliquid perps | 1D | Cross-sectional L/S, multi-asset relative-value | Live |
+| 2 | **Pairwise Vol-Spread (Intraday)** | Crypto perpetuals | Scheduled leader/lagger pairs | 1m | Pairwise statistical arbitrage / trend continuation | Research (walk-forward validated) |
+| 3 | **Session-Filtered Directional (Intraday)** | Crypto perpetuals | Scheduled leader/follower pairs | 15m | Directional, session-conditioned | Semi-live |
+
+---
+
+### 1. Cross-Sectional Lead-Lag — Daily
+
+A multi-asset long/short strategy operating on the full Hyperliquid perpetuals universe. Positions are rebalanced daily from a cross-sectional ranking extracted from the asset return matrix over a rolling lookback. Capital is allocated across a basket of followers with position weights driven by the signal strength.
+
+- **Universe:** all liquid Hyperliquid perpetuals passing a liquidity / data-availability filter
+- **Approach:** cross-sectional relative-value, rebuilt every cycle
+- **Risk:** spread-vol targeting, rolling signal-reliability score, drawdown circuit breaker, intraday stop-loss
+- **Live:** deployed through the Hyperliquid REST API, scheduled execution, market/ALO routing
+
+**Backtest — Jan 2025 → Apr 2026 (full walk-forward, fees & spread modelled):**
+| Metric | Value |
+|---|---|
+| Total return (start $10k) | **+85 – 100 %** |
+| Max drawdown | ~ -45 % |
+| α (excess over market-neutral benchmark) | 48 % |
+| β (raw directional hit-rate) | 52.5 % |
+| α ∩ β | 31.6 % |
+
+---
+
+### 2. Pairwise Vol-Spread — 1-Minute
+
+High-frequency intraday strategy trading pre-scheduled leader/lagger pairs. Each bar, the engine looks up the currently-active pair from a conjurator schedule, evaluates a volatility-based entry condition on the leader, and takes a directional position on the lagger with a fixed-risk exit rule.
+
+- **Universe:** dynamically rotating leader/lagger pairs (pair schedule rebuilt offline)
+- **Approach:** pairwise statistical arbitrage with directional continuation
+- **Execution:** entries and exits aligned to bar close; no pyramiding; hard parachute stop
+- **Optimisation:** hyperparameter search via Optuna with pruning, objective evaluated on a held-out window
+
+**Walk-forward backtest (fees 0.09 % round-trip):**
+| Window | Trades | Return | Max DD |
+|---|---|---|---|
+| In-sample | 28 | +2.48 % | -2.95 % |
+| Out-of-sample (short) | 24 | **+14.54 %** | -0.81 % |
+| Out-of-sample (long) | 398 | -27.7 % | -35.4 % |
+
+The long-OOS performance degradation was a deliberate stress test: it confirmed the pair schedule needs periodic re-fitting, which is now part of the production protocol.
+
+---
+
+### 3. Session-Filtered Directional — 15-Minute
+
+A directional strategy on crypto perps restricted to a narrow intraday session. The model is fitted by pooled OLS with HC3 robust standard errors on a pre-built regression dataset; the backtest executes one trade per active bar with a fixed-time exit.
+
+- **Universe:** scheduled leader/follower pairs resampled to 15-minute bars
+- **Approach:** directional, conditioned on session and signal magnitude
+- **Validation:** Monte-Carlo bootstrap on trade-level PnL (10 000 × n bootstrap, null-PF distribution)
+
+**In-sample — Jan 2026 → Mar 2026 (fees 0.09 % round-trip):**
+| Metric | Value |
+|---|---|
+| Trades | 58 |
+| Win rate | ~50 % |
+| **Profit factor** | **1.89** |
+| Total return | **+9.40 %** |
+| Sharpe (annualised) | **2.51** |
+| Max drawdown | ~ -3 % |
+| Bootstrap p-value (PF under H₀) | **3.49 %** |
+
+The short out-of-sample window (9 trades) came back flat-to-negative, which is consistent with the small sample and reinforces the need for larger OOS horizons before scaling size.
+
+---
+
+## Tech Stack
+
+**Language:** Python 3.11
+**Core libs:** `pandas`, `numpy`, `scipy`, `networkx`, `statsmodels`, `matplotlib`
+**Optimisation:** `optuna` (TPE sampler, MedianPruner)
+**Exchange / data:** Hyperliquid REST & WS APIs (`hyperliquid-python-sdk`, `eth_account`)
+**Infra:** scheduled execution (`schedule`), CSV-based data lake with incremental OHLC ingestion, structured logging, modular config via `dataclasses`
+**Dev:** local backtests on M-series MacBook; live bot runs on a dedicated Ubuntu VM
+
+---
+
+## Methodology
+
+The three projects share a common research protocol:
+
+1. **Data pipeline.** Raw OHLC pulled from the exchange, cleaned, aligned on a unified time grid, and filtered on data availability before any signal computation.
+2. **Walk-forward validation.** Rolling lookback windows — no future leakage. Parameters calibrated on in-sample, evaluated on untouched out-of-sample windows.
+3. **Transaction-cost modelling.** Exchange taker/maker fees, half-spread and, where relevant, market-impact slippage are modelled explicitly — net PnL is the only metric reported.
+4. **Risk management.** Separate module exposing volatility targeting, rolling signal-reliability scoring, and a drawdown circuit breaker that can flatten all positions. Per-trade intraday stop-loss on the daily strategy.
+5. **Statistical significance.** Profit factors are stress-tested with bootstrap resampling; regression-based signals use HC3 robust standard errors.
+6. **Execution parity.** Backtest engine and live bot share the same signal-generation code path to minimise IS/live divergence; deviations are tracked via a dedicated comparison notebook.
+
+---
+
+## Repository Layout
 
 ```
-Data Collection → Lévy Matrix → Hermitian Clustering → Signal Generation → Portfolio → Execution
-(importHL)        (levy.py)     (hermitian.py)         (trading_signal)   (portfolio)  (bot.py)
+.
+├── strategy_1_daily/          # cross-sectional L/S, 1D
+├── strategy_2_vol_spread/     # pairwise vol-spread, 1m
+├── strategy_3_session/        # session-filtered directional, 15m
 ```
 
-1. **Data Collection** — Multi-timeframe OHLCV candles are scraped from Hyperliquid's API (REST + WebSocket) for all listed perpetual contracts.
-2. **Lévy-Area Computation** — Pairwise lead-lag relationships are quantified using the Lévy-area signature between asset return paths. This produces an antisymmetric matrix where positive entries indicate asset *i* leads asset *j*.
-3. **Hermitian Clustering** — The Lévy matrix is embedded into a Hermitian matrix and spectrally decomposed. Eigenvector clustering groups assets into leaders and laggers.
-4. **Signal Generation** — Leader/lagger roles are translated into trading signals: long laggers expected to catch up, short leaders expected to revert.
-5. **Portfolio Construction** — Signals are combined into a weighted portfolio using GCP (Generalized Cluster Portfolio) methodology with risk constraints.
-6. **Execution** — The bot places limit orders on Hyperliquid with automated position management, drawdown monitoring, and reconnection logic.
+Each strategy folder contains its own `backtest/`, `live_bot/` (where applicable), `data/`, `results/` and `trading_signal/` modules. Source code for the proprietary signal engines and parameter sets is **not** included in this public repository.
 
-## Project Structure
+---
 
-```
-├── importHL_multi.py      # Multi-timeframe data scraper (REST, async)
-├── csv_transformer.py     # Data preprocessing and format conversion
-├── levy.py                # Lévy-area matrix computation
-├── hermitian.py           # Hermitian matrix construction and spectral clustering
-├── trading_signal.py      # Signal generation from cluster assignments
-├── portfolio.py           # Portfolio construction (CP, GCP, GP strategies)
-├── main.py                # Backtesting pipeline — orchestrates the full flow
-└── bot.py                 # Live trading bot for Hyperliquid
-```
+## About Me
 
-## Mathematical Foundations
+Quant / systematic trader with a focus on crypto perpetuals market microstructure, cross-sectional signals and live execution infrastructure. I build strategies end-to-end: research, backtest, risk framework, live deployment.
 
-### Lévy Area
+- **Portfolio / contact:** _(replace with your link — e.g. LinkedIn, personal site, or Twitter/X)_
+- **Email:** available on request
 
-For two asset return paths *X* and *Y*, the Lévy area is defined as:
+---
 
-```
-L(X, Y) = ½ ∫₀ᵀ (Xₜ dYₜ - Yₜ dXₜ)
-```
-
-If *X* leads *Y*, the integral is systematically positive. This is computed pairwise across all assets to build the lead-lag matrix.
-
-### Hermitian Clustering
-
-The antisymmetric Lévy matrix **A** is converted into a Hermitian matrix **H = iA** (where *i* is the imaginary unit). Spectral decomposition of **H** yields eigenvectors whose phases encode the lead-lag ordering. K-means clustering on these phases separates assets into leader and lagger groups.
-
-### Portfolio Strategies
-
-- **CP** (Cluster Portfolio) — Equal weight within leader/lagger clusters
-- **GCP** (Generalized Cluster Portfolio) — Weights proportional to eigenvector loadings
-- **GP** (Generalized Portfolio) — Full spectral weighting across all eigenvectors
-
-## Quick Start
-
-### Requirements
-
-```
-Python 3.10+
-```
-
-```bash
-pip install pandas numpy scipy scikit-learn aiohttp hyperliquid-python-sdk
-```
-
-### 1. Collect Data
-
-```bash
-# Scrape all coins, all timeframes
-python importHL_multi.py
-
-# Or target specific timeframes / coins
-python importHL_multi.py -t 1h 1d -c BTC ETH SOL
-```
-
-### 2. Run Backtest
-
-```bash
-python main.py
-```
-
-This runs the full pipeline (Lévy → Hermitian → Signals → Portfolio) on historical data and outputs performance metrics.
-
-### 3. Live Trading
-
-```bash
-python bot.py
-```
-
-The bot will:
-- Generate fresh signals from the latest data
-- Place limit orders on Hyperliquid
-- Monitor positions and enforce drawdown limits
-
-## Configuration
-
-Key parameters (in `bot.py` / `main.py`):
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| Timeframe | `1d` | Signal generation timeframe |
-| Strategy | `GCP` | Portfolio construction method |
-| Max Drawdown | `20%` | Kill switch threshold |
-| Capital | `< $1,000` | Initial test capital |
-
-## Data Pipeline
-
-The scraper supports 4 timeframes with incremental collection:
-
-| Timeframe | Lookback | Use Case |
-|-----------|----------|----------|
-| `5m` | 30 days | Microstructure research |
-| `15m` | 60 days | Intraday signals |
-| `1h` | 180 days | Medium-frequency trading |
-| `1d` | 365 days | Portfolio rebalancing (primary) |
-
-Data is stored as CSV files in `~/Desktop/data/data/`.
-
-## Research References
-
-This project builds on recent academic work in lead-lag detection:
-
-- **Lévy-area approach** for lead-lag detection in financial time series using rough path signatures
-- **Hermitian matrix clustering** framework for directed network analysis of asset relationships
-- **DeltaLag** — deep learning approaches for lead-lag detection in cryptocurrency markets
-- Foundation code inspired by [ARahimiQuant/lead-lag-portfolios](https://github.com/ARahimiQuant/lead-lag-portfolios)
-
-## Roadmap
-
-- [x] Data collection pipeline (multi-timeframe)
-- [x] Lévy matrix computation
-- [x] Hermitian spectral clustering
-- [x] Backtesting framework (CP, GCP, GP)
-- [x] Live trading bot (Hyperliquid)
-- [x] WebSocket real-time data mode
-- [ ] Multi-timeframe signal confirmation
-- [ ] Higher frequency execution (1h, 15m)
-
-
-## Disclaimer
-
-This software is for **educational and research purposes only**. Cryptocurrency trading involves substantial risk of loss. Past performance does not guarantee future results. Use at your own risk.
-
-## License
-
-MIT
+*This repository is a showcase. It does not constitute investment advice, nor a solicitation, nor a guarantee of future returns. Past backtest and live performance is not indicative of future results.*
