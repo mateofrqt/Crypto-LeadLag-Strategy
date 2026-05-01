@@ -9,6 +9,8 @@
 
 This repository showcases three systematic trading strategies I have designed, backtested and, for one of them, deployed live on crypto perpetuals. Signal construction, thresholds and parameter sets are intentionally omitted; this document focuses on architecture, methodology and out-of-sample results.
 
+The strategies are grounded in academic research on lead-lag dynamics and rough path theory. The primary theoretical foundation is [Bennett et al. (2023)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4599565); additional reference papers are available [here](https://drive.google.com/drive/folders/1pJbmYzLIpDhWyt0yeBOKrEfnpawo5FCX?usp=drive_link).
+
 ---
 
 ## Strategies Overview
